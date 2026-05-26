@@ -689,14 +689,14 @@ const cpCurrent = uid => {
   const u = USERS.find(x => x.id === uid);
   if(!u) return 0;
   const today = todayStr();
-  // Start from payslip base
+  // Start from payslip base (May 31, 2026)
   const base = u.cp_base || 0;
-  // Add CP accumulated since base date
+  // Add CP accumulated since base date until today
   const accrued = calcCPSinceBase(u.entry, BASE_DATE, today);
-  // Deduct approved requests taken AFTER base date (past only, not future)
+  // Deduct ONLY approved requests already taken (start_date between BASE_DATE and TODAY)
   const taken = REQUESTS.filter(r =>
     r.user_id === uid && r.type === 'PL' && r.status === 'approved' &&
-    r.start_date > BASE_DATE && r.start_date <= today
+    r.start_date > BASE_DATE && r.end_date <= today
   ).reduce((s,r) => s + r.days, 0);
   return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
 };
@@ -707,9 +707,10 @@ const rttCurrent = uid => {
   const today = todayStr();
   const base = u.rtt_base || 0;
   const accrued = calcRTTSinceBase(u.entry, BASE_DATE, today);
+  // Deduct ONLY approved requests already taken (end_date <= today)
   const taken = REQUESTS.filter(r =>
     r.user_id === uid && r.type === 'RTT' && r.status === 'approved' &&
-    r.start_date > BASE_DATE && r.start_date <= today
+    r.start_date > BASE_DATE && r.end_date <= today
   ).reduce((s,r) => s + r.days, 0);
   return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
 };
