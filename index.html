@@ -644,8 +644,75 @@ function closeM(id){document.getElementById(id).classList.remove('open');}
 function notif(msg,type='info'){const el=document.getElementById('notif');el.textContent=msg;el.className=`notif ${type} show`;setTimeout(()=>el.classList.remove('show'),3500);}
 
 // Balance helpers
-const cpCurrent=uid=>{const u=USERS.find(x=>x.id===uid);if(!u)return 0;const nd=REQUESTS.filter(r=>r.user_id===uid&&r.type==='PL'&&r.status==='approved'&&r.created_at>TODAY).reduce((s,r)=>s+r.days,0);return Math.max(0,Math.round((u.cp_base-nd)*100)/100);};
-const rttCurrent=uid=>{const u=USERS.find(x=>x.id===uid);if(!u)return 0;const nd=REQUESTS.filter(r=>r.user_id===uid&&r.type==='RTT'&&r.status==='approved'&&r.created_at>TODAY).reduce((s,r)=>s+r.days,0);return Math.max(0,Math.round((u.rtt_base-nd)*100)/100);};
+// ── DYNAMIC BALANCE CALCULATION ──
+// Base = payslip of May 31, 2026 (cp_base / rtt_base)
+// Then auto-accumulate daily using CP=2.08/month, RTT=0.83/month
+// Deduct all approved requests taken AFTER the base date
+
+const BASE_DATE = '2026-05-31'; // Date of reference payslips
+
+function calcCPSinceBase(entry, baseDate, targetDate) {
+  // CP accrued between baseDate and targetDate
+  const b = new Date(baseDate+'T12:00:00');
+  const t = new Date(targetDate+'T12:00:00');
+  if(t <= b) return 0;
+  let months = (t.getFullYear()-b.getFullYear())*12 + (t.getMonth()-b.getMonth());
+  if(t.getDate() < b.getDate()) months--;
+  months = Math.max(0, months);
+  // Prorata current partial month
+  const dom = new Date(t.getFullYear(), t.getMonth()+1, 0).getDate();
+  const daysPassed = t.getDate();
+  const prorata = (daysPassed/dom) * 2.08;
+  return Math.round((months * 2.08 + prorata) * 100) / 100;
+}
+
+function calcRTTSinceBase(entry, baseDate, targetDate) {
+  // RTT accrued between baseDate and targetDate (calendar year)
+  const b = new Date(baseDate+'T12:00:00');
+  const t = new Date(targetDate+'T12:00:00');
+  if(t <= b) return 0;
+  let months = (t.getFullYear()-b.getFullYear())*12 + (t.getMonth()-b.getMonth());
+  if(t.getDate() < b.getDate()) months--;
+  months = Math.max(0, months);
+  const dom = new Date(t.getFullYear(), t.getMonth()+1, 0).getDate();
+  const daysPassed = t.getDate();
+  const prorata = (daysPassed/dom) * 0.83;
+  return Math.round((months * 0.83 + prorata) * 100) / 100;
+}
+
+function todayStr() {
+  const d = new Date();
+  return ymds(d);
+}
+
+const cpCurrent = uid => {
+  const u = USERS.find(x => x.id === uid);
+  if(!u) return 0;
+  const today = todayStr();
+  // Start from payslip base
+  const base = u.cp_base || 0;
+  // Add CP accumulated since base date
+  const accrued = calcCPSinceBase(u.entry, BASE_DATE, today);
+  // Deduct approved requests taken AFTER base date (past only, not future)
+  const taken = REQUESTS.filter(r =>
+    r.user_id === uid && r.type === 'PL' && r.status === 'approved' &&
+    r.start_date > BASE_DATE && r.start_date <= today
+  ).reduce((s,r) => s + r.days, 0);
+  return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
+};
+
+const rttCurrent = uid => {
+  const u = USERS.find(x => x.id === uid);
+  if(!u) return 0;
+  const today = todayStr();
+  const base = u.rtt_base || 0;
+  const accrued = calcRTTSinceBase(u.entry, BASE_DATE, today);
+  const taken = REQUESTS.filter(r =>
+    r.user_id === uid && r.type === 'RTT' && r.status === 'approved' &&
+    r.start_date > BASE_DATE && r.start_date <= today
+  ).reduce((s,r) => s + r.days, 0);
+  return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
+};
 const cpFut=uid=>REQUESTS.filter(r=>r.user_id===uid&&r.type==='PL'&&r.status==='approved'&&r.start_date>TODAY).reduce((s,r)=>s+r.days,0);
 const rttFut=uid=>REQUESTS.filter(r=>r.user_id===uid&&r.type==='RTT'&&r.status==='approved'&&r.start_date>TODAY).reduce((s,r)=>s+r.days,0);
 const cpTakenPast=uid=>ABSDAYS.filter(e=>e.u===uid&&e.t==='PL'&&e.d<=TODAY).length;
@@ -753,8 +820,10 @@ function pgDash(){
   if(u.must_pw)h+=`<div class="pwbanner"><span>🔐 ${t('mustpw')}</span><button class="btn btn-gold btn-sm" onclick="openM('m-pw')">${t('chgpw')}</button></div>`;
   if(!isRO()){
     h+=`<div class="cards">`;
-    h+=card(t('cp'),cpN.toFixed(2),'gold',`${t('taken')}: ${cpTakenPast(u.id)} j · Planifié: ${cpFut(u.id)} j`,t('dlcp'));
-    h+=card(t('rtt'),rttN.toFixed(2),'sage',`${t('taken')}: ${rttTakenPast(u.id)} j · Planifié: ${rttFut(u.id)} j`,t('dlrtt'));
+    h+=card(t('cp'),cpN.toFixed(2),'gold',`Solde au ${fd(todayStr())} · Planifié: ${cpFut(u.id)} j`,t('dlcp'));
+    h+=card(t('rtt'),rttN.toFixed(2),'sage',`Solde au ${fd(todayStr())} · Planifié: ${rttFut(u.id)} j`,t('dlrtt'));
+    h+=`</div>`;
+    h+=`<div class="cards">`;
     h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(u.id)} j`,'');
     if(isMgr())h+=card(LANG==='fr'?'En attente':'Pending',pend.length,'blue',LANG==='fr'?'à valider':'to validate','');
     h+=`</div>`;
@@ -820,8 +889,8 @@ function pgMyLeaves(){
   const cpN=cpCurrent(u.id),rttN=rttCurrent(u.id),rl=recupLeft(u.id);
   let h=`<div class="ptitle">${t('myleaves')}</div><div class="psub">${LANG==='fr'?'Vos soldes et historique':'Your balances and history'}</div>`;
   h+=`<div class="cards">`;
-  h+=card(t('cp'),cpN.toFixed(2),'gold',`${t('taken')}: ${cpTakenPast(u.id)} j · Planifié: ${cpFut(u.id)} j`,t('dlcp'));
-  h+=card(t('rtt'),rttN.toFixed(2),'sage',`${t('taken')}: ${rttTakenPast(u.id)} j · Planifié: ${rttFut(u.id)} j`,t('dlrtt'));
+  h+=card(t('cp'),cpN.toFixed(2),'gold',`Solde au ${fd(todayStr())} · Planifié: ${cpFut(u.id)} j`,t('dlcp'));
+  h+=card(t('rtt'),rttN.toFixed(2),'sage',`Solde au ${fd(todayStr())} · Planifié: ${rttFut(u.id)} j`,t('dlrtt'));
   h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(u.id)} j`,'');
   h+=`</div>`;
   h+=simBox(u.id);
@@ -927,8 +996,8 @@ function pgProfile(uid){
   let h=`<button class="btn btn-ol btn-sm" style="margin-bottom:14px" onclick="goTo('employees')">← ${t('back')}</button>`;
   h+=`<div class="phead"><div class="pavatar">${u.name[0]}</div><div><div class="pname">${u.name}</div><div class="pmeta">${u.job||''}</div><div class="pmeta">${LANG==='fr'?'Entrée :':'Start:'} ${fd(u.entry)} · ${rb(u.role)}</div></div></div>`;
   h+=`<div class="cards">`;
-  h+=card(t('cp'),cpN.toFixed(2),'gold',`${t('taken')}: ${cpTakenPast(uid)} j · Planifié: ${cpFut(uid)} j`,t('dlcp'));
-  h+=card(t('rtt'),rttN.toFixed(2),'sage',`${t('taken')}: ${rttTakenPast(uid)} j · Planifié: ${rttFut(uid)} j`,t('dlrtt'));
+  h+=card(t('cp'),cpN.toFixed(2),'gold',`Solde au ${fd(todayStr())} · Planifié: ${cpFut(uid)} j`,t('dlcp'));
+  h+=card(t('rtt'),rttN.toFixed(2),'sage',`Solde au ${fd(todayStr())} · Planifié: ${rttFut(uid)} j`,t('dlrtt'));
   h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(uid)} j`,'');
   h+=`</div>`;
   h+=simBox(uid);
@@ -1237,12 +1306,8 @@ async function adminAddReq(){
   try{
     await db.createRequest(data);
     REQUESTS.unshift(data);
-    // Deduct from balance if after base date
-    if(start>TODAY){
-      const u=USERS.find(x=>x.id===uid);
-      if(type==='PL'){u.cp_base=Math.max(0,+(u.cp_base-days).toFixed(2));await db.updateUser(uid,{cp_base:u.cp_base});}
-      if(type==='RTT'){u.rtt_base=Math.max(0,+(u.rtt_base-days).toFixed(2));await db.updateUser(uid,{rtt_base:u.rtt_base});}
-    }
+    // Note: balances are managed manually via payslip updates (cp_base/rtt_base)
+    // We do NOT auto-deduct future requests from the balance
     closeM('m-admin-req');
     notif('Jours ajout&#233;s ✓','success');
     renderPage('admin');
