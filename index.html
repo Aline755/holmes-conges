@@ -645,29 +645,26 @@ function notif(msg,type='info'){const el=document.getElementById('notif');el.tex
 
 // Balance helpers
 // ── DYNAMIC BALANCE CALCULATION ──
-// Base = payslip of May 31, 2026 (cp_base / rtt_base)
-// Then auto-accumulate daily using CP=2.08/month, RTT=0.83/month
-// Deduct all approved requests taken AFTER the base date
+// Base = payslip of May 31, 2026 (cp_base / rtt_base in Supabase)
+// Auto-accumulates: CP +2.08j/month, RTT +0.83j/month from June 1
+// Only deducts NEW requests created AND taken AFTER base date
+// Historical requests (in CALMAP) are already included in the payslip base
 
-const BASE_DATE = '2026-05-31'; // Date of reference payslips
+const BASE_DATE = '2026-05-31';
 
-function calcCPSinceBase(entry, baseDate, targetDate) {
-  // CP accrued between baseDate and targetDate
+function calcCPSinceBase(baseDate, targetDate) {
   const b = new Date(baseDate+'T12:00:00');
   const t = new Date(targetDate+'T12:00:00');
   if(t <= b) return 0;
   let months = (t.getFullYear()-b.getFullYear())*12 + (t.getMonth()-b.getMonth());
   if(t.getDate() < b.getDate()) months--;
   months = Math.max(0, months);
-  // Prorata current partial month
   const dom = new Date(t.getFullYear(), t.getMonth()+1, 0).getDate();
-  const daysPassed = t.getDate();
-  const prorata = (daysPassed/dom) * 2.08;
+  const prorata = (t.getDate()/dom) * 2.08;
   return Math.round((months * 2.08 + prorata) * 100) / 100;
 }
 
-function calcRTTSinceBase(entry, baseDate, targetDate) {
-  // RTT accrued between baseDate and targetDate (calendar year)
+function calcRTTSinceBase(baseDate, targetDate) {
   const b = new Date(baseDate+'T12:00:00');
   const t = new Date(targetDate+'T12:00:00');
   if(t <= b) return 0;
@@ -675,28 +672,26 @@ function calcRTTSinceBase(entry, baseDate, targetDate) {
   if(t.getDate() < b.getDate()) months--;
   months = Math.max(0, months);
   const dom = new Date(t.getFullYear(), t.getMonth()+1, 0).getDate();
-  const daysPassed = t.getDate();
-  const prorata = (daysPassed/dom) * 0.83;
+  const prorata = (t.getDate()/dom) * 0.83;
   return Math.round((months * 0.83 + prorata) * 100) / 100;
 }
 
-function todayStr() {
-  const d = new Date();
-  return ymds(d);
-}
+function todayStr() { return ymds(new Date()); }
 
 const cpCurrent = uid => {
   const u = USERS.find(x => x.id === uid);
   if(!u) return 0;
   const today = todayStr();
-  // Start from payslip base (May 31, 2026)
   const base = u.cp_base || 0;
-  // Add CP accumulated since base date until today
-  const accrued = calcCPSinceBase(u.entry, BASE_DATE, today);
-  // Deduct ONLY approved requests already taken (start_date between BASE_DATE and TODAY)
+  // CP accumulated from June 1 onwards
+  const accrued = calcCPSinceBase(BASE_DATE, today);
+  // Only deduct NEW requests (created after BASE_DATE) that are already past
   const taken = REQUESTS.filter(r =>
-    r.user_id === uid && r.type === 'PL' && r.status === 'approved' &&
-    r.start_date > BASE_DATE && r.end_date <= today
+    r.user_id === uid &&
+    r.type === 'PL' &&
+    r.status === 'approved' &&
+    r.created_at > BASE_DATE &&  // created after the payslip base date
+    r.end_date <= today            // already taken (past)
   ).reduce((s,r) => s + r.days, 0);
   return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
 };
@@ -706,11 +701,13 @@ const rttCurrent = uid => {
   if(!u) return 0;
   const today = todayStr();
   const base = u.rtt_base || 0;
-  const accrued = calcRTTSinceBase(u.entry, BASE_DATE, today);
-  // Deduct ONLY approved requests already taken (end_date <= today)
+  const accrued = calcRTTSinceBase(BASE_DATE, today);
   const taken = REQUESTS.filter(r =>
-    r.user_id === uid && r.type === 'RTT' && r.status === 'approved' &&
-    r.start_date > BASE_DATE && r.end_date <= today
+    r.user_id === uid &&
+    r.type === 'RTT' &&
+    r.status === 'approved' &&
+    r.created_at > BASE_DATE &&
+    r.end_date <= today
   ).reduce((s,r) => s + r.days, 0);
   return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
 };
