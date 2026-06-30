@@ -650,7 +650,7 @@ function notif(msg,type='info'){const el=document.getElementById('notif');el.tex
 // Only deducts NEW requests created AND taken AFTER base date
 // Historical requests (in CALMAP) are already included in the payslip base
 
-const BASE_DATE = '2026-05-31';
+const BASE_DATE = '2026-06-30';
 
 function calcCPSinceBase(baseDate, targetDate) {
   const b = new Date(baseDate+'T12:00:00');
@@ -682,16 +682,18 @@ const cpCurrent = uid => {
   const u = USERS.find(x => x.id === uid);
   if(!u) return 0;
   const today = todayStr();
+  // If employee hasn't started yet, no balance at all
+  if(u.entry > today) return 0;
   const base = u.cp_base || 0;
-  // CP accumulated from June 1 onwards
-  const accrued = calcCPSinceBase(BASE_DATE, today);
-  // Only deduct NEW requests (created after BASE_DATE) that are already past
+  // Accrual starts from the LATER of (BASE_DATE, entry date)
+  const accrualStart = u.entry > BASE_DATE ? u.entry : BASE_DATE;
+  const accrued = calcCPSinceBase(accrualStart, today);
   const taken = REQUESTS.filter(r =>
     r.user_id === uid &&
     r.type === 'PL' &&
     r.status === 'approved' &&
-    r.created_at > BASE_DATE &&  // created after the payslip base date
-    r.end_date <= today            // already taken (past)
+    r.created_at > BASE_DATE &&
+    r.end_date <= today
   ).reduce((s,r) => s + r.days, 0);
   return Math.max(0, Math.round((base + accrued - taken) * 100) / 100);
 };
@@ -700,8 +702,10 @@ const rttCurrent = uid => {
   const u = USERS.find(x => x.id === uid);
   if(!u) return 0;
   const today = todayStr();
+  if(u.entry > today) return 0;
   const base = u.rtt_base || 0;
-  const accrued = calcRTTSinceBase(BASE_DATE, today);
+  const accrualStart = u.entry > BASE_DATE ? u.entry : BASE_DATE;
+  const accrued = calcRTTSinceBase(accrualStart, today);
   const taken = REQUESTS.filter(r =>
     r.user_id === uid &&
     r.type === 'RTT' &&
