@@ -1015,7 +1015,13 @@ function pgEmps(){
   const canSeeAll = isMgr() || CURRENT_USER.id==='laura';
   if(canSeeAll){
     h+=`<div class="twrap"><table><thead><tr><th>${t('name')}</th><th>${t('jobtitle')}</th><th>${t('entry')}</th><th>CP</th><th>RTT</th><th>Récup</th><th>${t('access')}</th><th></th></tr></thead><tbody>`;
-    emps.forEach(u=>{h+=`<tr><td><div style="display:flex;align-items:center;gap:9px"><div style="width:28px;height:28px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:var(--dark);flex-shrink:0">${u.name[0]}</div>${u.name}</div></td><td>${u.job||'—'}</td><td>${fd(u.entry)}</td><td><strong>${cpCurrent(u.id).toFixed(2)}</strong></td><td><strong>${rttCurrent(u.id).toFixed(2)}</strong></td><td><strong>${recupLeft(u.id).toFixed(1)}</strong></td><td>${rb(u.role)}</td><td><button class="btn btn-ol btn-sm" onclick="goTo('profile-${u.id}')">${t('profile')}</button></td></tr>`;});
+    emps.forEach(u=>{
+      const noBalance = ['laura','stacey'].includes(u.id);
+      const cpDisplay = noBalance ? '—' : cpCurrent(u.id).toFixed(2);
+      const rttDisplay = noBalance ? '—' : rttCurrent(u.id).toFixed(2);
+      const recupDisplay = noBalance ? '—' : recupLeft(u.id).toFixed(1);
+      h+=`<tr><td><div style="display:flex;align-items:center;gap:9px"><div style="width:28px;height:28px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:var(--dark);flex-shrink:0">${u.name[0]}</div>${u.name}</div></td><td>${u.job||'—'}</td><td>${fd(u.entry)}</td><td><strong>${cpDisplay}</strong></td><td><strong>${rttDisplay}</strong></td><td><strong>${recupDisplay}</strong></td><td>${rb(u.role)}</td><td><button class="btn btn-ol btn-sm" onclick="goTo('profile-${u.id}')">${t('profile')}</button></td></tr>`;
+    });
     h+=`</tbody></table></div>`;
   } else {
     // Simple employees: only see names and job titles, no balances, no profile links
@@ -1032,15 +1038,18 @@ function pgProfile(uid){
   const canView = isMgr() || CURRENT_USER.id==='laura' || CURRENT_USER.id===uid;
   if(!canView) return`<div class="empty">⛔ Vous n'avez pas accès à ce profil.</div>`;
   const myR=REQUESTS.filter(r=>r.user_id===uid),canEdit=isAdmin();
+  const noBalanceProfile = ['laura','stacey'].includes(uid);
   const cpN=cpCurrent(uid),rttN=rttCurrent(uid),rl=recupLeft(uid);
   let h=`<button class="btn btn-ol btn-sm" style="margin-bottom:14px" onclick="goTo('employees')">← ${t('back')}</button>`;
   h+=`<div class="phead"><div class="pavatar">${u.name[0]}</div><div><div class="pname">${u.name}</div><div class="pmeta">${u.job||''}</div><div class="pmeta">${LANG==='fr'?'Entrée :':'Start:'} ${fd(u.entry)} · ${rb(u.role)}</div></div></div>`;
-  h+=`<div class="cards">`;
-  h+=card(t('cp'),cpN.toFixed(2),'gold',`Solde au ${fd(todayStr())} · Planifié: ${cpFut(uid)} j`,t('dlcp'));
-  h+=card(t('rtt'),rttN.toFixed(2),'sage',`Solde au ${fd(todayStr())} · Planifié: ${rttFut(uid)} j`,t('dlrtt'));
-  h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(uid)} j`,'');
-  h+=`</div>`;
-  h+=simBox(uid);
+  if(!noBalanceProfile){
+    h+=`<div class="cards">`;
+    h+=card(t('cp'),cpN.toFixed(2),'gold',`Solde au ${fd(todayStr())} · Planifié: ${cpFut(uid)} j`,t('dlcp'));
+    h+=card(t('rtt'),rttN.toFixed(2),'sage',`Solde au ${fd(todayStr())} · Planifié: ${rttFut(uid)} j`,t('dlrtt'));
+    h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(uid)} j`,'');
+    h+=`</div>`;
+    h+=simBox(uid);
+  }
   h+=`<div class="tabs"><div class="tab active" onclick="swt(this,'pp-all')">📋 Tout l'historique</div><div class="tab" onclick="swt(this,'pp-cp')">🌴 CP</div><div class="tab" onclick="swt(this,'pp-rtt')">📆 RTT</div><div class="tab" onclick="swt(this,'pp-rec')">🔄 Récupération</div>`;
   if(canEdit)h+=`<div class="tab" onclick="swt(this,'pp-ed')">✏️ ${t('edit')}</div>`;h+=`</div>`;
   h+=`<div class="tcontent active" id="pp-all">`;
