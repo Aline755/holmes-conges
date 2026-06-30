@@ -768,7 +768,7 @@ function renderSidebar(){
   let h='';
   h+=`<div class="nlabel">${t('overview')}</div>`;
   h+=ni('dashboard','🏠',t('dashboard'));
-  if(!isRO())h+=ni('myleaves','📋',t('myleaves'));
+  if(!isRO() && CURRENT_USER.role !== 'admin')h+=ni('myleaves','📋',t('myleaves'));
   h+=ni('calendar','📅',t('calendar'));
   if(isMgr()){h+=`<div class="nlabel" style="margin-top:8px">${t('team')}</div>`;h+=ni('allreq','📨',t('requests'));h+=ni('employees','👥',t('employees'));if(isAdmin())h+=ni('admin','⚙️','Gestion admin');}
   else if(isRO()){h+=`<div class="nlabel" style="margin-top:8px">${t('team')}</div>`;h+=ni('employees','👥',t('employees'));}
@@ -814,9 +814,10 @@ function runSim(uid){
 function pgDash(){
   const u=CURRENT_USER,pend=REQUESTS.filter(r=>r.status==='pending');
   const cpN=cpCurrent(u.id),rttN=rttCurrent(u.id),rl=recupLeft(u.id);
+  const showBalances = !isRO() && u.role !== 'admin';
   let h=`<div class="ptitle">${t('hello')}, ${u.name.split(' ')[0]} 👋</div><div class="psub">${fmtLong(new Date())}</div>`;
   if(u.must_pw)h+=`<div class="pwbanner"><span>🔐 ${t('mustpw')}</span><button class="btn btn-gold btn-sm" onclick="openM('m-pw')">${t('chgpw')}</button></div>`;
-  if(!isRO()){
+  if(showBalances){
     h+=`<div class="cards">`;
     h+=card(t('cp'),cpN.toFixed(2),'gold',`Solde au ${fd(todayStr())} · Planifié: ${cpFut(u.id)} j`,t('dlcp'));
     h+=card(t('rtt'),rttN.toFixed(2),'sage',`Solde au ${fd(todayStr())} · Planifié: ${rttFut(u.id)} j`,t('dlrtt'));
