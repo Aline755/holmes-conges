@@ -1169,8 +1169,27 @@ async function appr(id){
 }
 
 async function ref(id){
+  const r=REQUESTS.find(x=>x.id===id);
   await db.updateRequest(id,{status:'refused'});
-  REQUESTS.find(x=>x.id===id).status='refused';
+  r.status='refused';
+  // Notify the employee and Bettina
+  const emp=USERS.find(x=>x.id===r.user_id);
+  if(emp){
+    const typeLabels={PL:'Congés payés (CP)',RTT:'RTT',SL:'Congé maladie',RECUP:'Récupération',CSS:'Congé sans solde',MAT:'Maternité / Paternité',FAM:'Événement familial',OTHER:'Autre'};
+    const params={
+      from_name:'Margaux Godeau Canac',
+      leave_type:typeLabels[r.type]||r.type,
+      start_date:r.start_date,
+      end_date:r.end_date,
+      days:r.days,
+      comment:'❌ Demande REFUSÉE',
+      reply_to:'margaux@holmesproduction.com',
+    };
+    // Send to employee
+    try{ await emailjs.send(EJS_SERVICE,EJS_TEMPLATE,{...params,to_email:emp.email},EJS_KEY); }catch(e){}
+    // Send to Bettina
+    try{ await emailjs.send(EJS_SERVICE,EJS_TEMPLATE,{...params,to_email:'bettina@holmesproduction.com'},EJS_KEY); }catch(e){}
+  }
   notif('Demande refusée','info');renderPage(AP);
 }
 
