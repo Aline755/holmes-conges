@@ -1194,7 +1194,11 @@ async function ref(id){
 }
 
 let _ruid=null;
-function openRAdd(uid){_ruid=uid;['ra-dates','ra-job','ra-nb'].forEach(i=>document.getElementById(i).value='');openM('m-radd');}
+function openRAdd(uid){
+  _ruid = uid || CURRENT_USER.id;
+  ['ra-dates','ra-job','ra-nb'].forEach(i=>document.getElementById(i).value='');
+  openM('m-radd');
+}
 async function saveRAdd(){
   const uid=_ruid,dates=document.getElementById('ra-dates').value,job=document.getElementById('ra-job').value;
   const nb=parseFloat(document.getElementById('ra-nb').value)||0;
