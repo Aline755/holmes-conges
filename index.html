@@ -925,7 +925,7 @@ function pgMyLeaves(){
   h+=`</div>`;
   h+=simBox(u.id);
   h+=`<div class="tabs"><div class="tab active" onclick="swt(this,'ml-all')">📋 ${t('history')}</div><div class="tab" onclick="swt(this,'ml-cp')">🌴 ${t('cp')}</div><div class="tab" onclick="swt(this,'ml-rtt')">📆 RTT</div><div class="tab" onclick="swt(this,'ml-rec')">🔄 ${t('recup_tab')}</div></div>`;
-  h+=`<div class="tcontent active" id="ml-all"><div style="text-align:right;margin-bottom:10px"><button class="btn btn-dark btn-sm" onclick="openM('m-req')">${t('newreq')}</button></div>`;
+  h+=`<div class="tcontent active" id="ml-all"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><button class="btn btn-dark btn-sm" onclick="openM('m-req')">${t('newreq')}</button><button class="btn btn-ol btn-sm" onclick="openRAdd('${u.id}')">+ ${LANG==='fr'?'Jours travaillés (récup)':'Add worked days (time off)'}</button></div>`;
   const fut=myR.filter(r=>isFuture(r.start_date)),past=myR.filter(r=>!isFuture(r.start_date));
   if(fut.length){h+=`<div class="stitle">🕐 ${t('fut')}</div><div class="twrap"><table><thead><tr><th>Type</th><th>Période</th><th>Jours</th></tr></thead><tbody>`;fut.forEach(r=>h+=`<tr><td>${tb(r.type)}</td><td>${fd(r.start_date)} → ${fd(r.end_date)}</td><td>${r.days}</td></tr>`);h+=`</tbody></table></div>`;}
   h+=`<div class="stitle">✅ ${t('past')}</div>`;
