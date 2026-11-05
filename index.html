@@ -437,6 +437,17 @@ const db = {
     if(error){ console.warn('team_directory:', error.message); return []; }
     return data||[];
   },
+  // Nombre de RTT par année civile
+  async getRttYears() {
+    const {data,error} = await _supabase.from('rtt_annuel').select('annee,nb_jours');
+    if(error){ console.warn('rtt_annuel:', error.message); return []; }
+    return data||[];
+  },
+  async saveRttYear(annee, nb) {
+    const {data,error} = await _supabase.from('rtt_annuel').upsert({annee, nb_jours:nb}).select();
+    if(error) throw new Error(error.message);
+    if(!data||!data.length) throw new Error(NOT_ALLOWED);
+  },
   // Planning d'équipe sans les motifs (pour les salariés)
   async getTeamCal() {
     const {data,error} = await _supabase.from('team_calendar').select('user_id,first_name,start_date,end_date,pending');
@@ -586,6 +597,7 @@ async function loadAllData(){
   // un salarié voit le planning des collègues, sans le motif
   TEAMCAL = seesTeam() ? [] : (await db.getTeamCal()).filter(x=>x.user_id!==CURRENT_USER.id).sort((a,b)=>(a.pending?1:0)-(b.pending?1:0));
   TEAMDIR = (isRO() && !seesTeam()) ? await db.getTeamDir() : [];
+  RTT_YEARS = {}; (await db.getRttYears()).forEach(x=>{RTT_YEARS[x.annee]=Number(x.nb_jours);});
 }
 
 const isAdmin=()=>CURRENT_USER?.role==='admin';
@@ -744,9 +756,14 @@ function simulate(uid,target){
 // Ensuite, jour par jour : +2,08 j CP et +0,83 j RTT par mois (au prorata des jours),
 // bascule au 1er juin (N-1 non pris -> reliquat, N -> N-1, N repart à 0),
 // et déduction des CP validés : reliquat, puis N-1, puis N (anticipation possible).
+// RTT : année civile, compteur remis à zéro au 1er janvier (RTT non pris perdus) ;
+// acquisition = nombre de RTT de l'année (table rtt_annuel, réglé dans Gestion admin) ÷ 12 par mois.
+// Année non renseignée : 0,83 j/mois jusqu'en 2026 (règle d'origine), rien à partir de 2027.
 // Sans date de référence, le salarié reste sur l'ancien calcul.
 // ═══════════════════════════════════════
-const CP_MOIS = 2.08, RTT_MOIS = 0.83;
+const CP_MOIS = 2.08;
+let RTT_YEARS = {};   // {annee: nombre de RTT de l'année}
+function rttMonthly(y){const v=RTT_YEARS[y];return v!=null?Number(v)/12:(y<=2026?0.83:0);}
 const hasRef = u => !!(u && u.solde_date);
 let BAL_CACHE = {};
 function addDays(ds,n){const d=new Date(ds+'T12:00:00');d.setDate(d.getDate()+n);return ymds(d);}
@@ -780,7 +797,8 @@ function balanceAt(u,T){
     let d=addDays(R,1);
     while(d<=T){
       if(d.slice(5)==='06-01'){st.rel+=st.n1;st.n1=st.n;st.n=0;}
-      if(!entry||d>=entry){const q=1/daysInMonth(d);st.n+=CP_MOIS*q;st.rtt+=RTT_MOIS*q;}
+      if(d.slice(5)==='01-01'){st.rtt=0;}
+      if(!entry||d>=entry){const q=1/daysInMonth(d);st.n+=CP_MOIS*q;st.rtt+=rttMonthly(+d.slice(0,4))*q;}
       const l=lm[d];
       if(l){
         let x=l.PL;
@@ -910,6 +928,7 @@ function runSim(uid){
   h+=cell('RTT',s.rtt,'Solde à cette date');
   h+=`</div>`;
   if(periodYear(target)>periodYear(T))h+=`<div style="font-size:11px;color:var(--muted);margin-top:8px">ℹ️ Au 1er juin, les CP N deviennent des CP N-1 et un nouveau compteur N démarre.</div>`;
+  if(target.slice(0,4)>T.slice(0,4))h+=`<div style="font-size:11px;color:var(--muted);margin-top:4px">ℹ️ Au 1er janvier, les RTT non pris sont perdus : le compteur RTT repart de zéro.</div>`;
   el.innerHTML=h;
 }
 
@@ -1342,7 +1361,7 @@ function lastMonthEnd(){const d=new Date();return ymds(new Date(d.getFullYear(),
 function refForm(u){
   const D=lastMonthEnd();
   let h=`<div class="stitle" style="margin-top:0">Soldes de référence (bulletin de paie)</div>`;
-  h+=`<div class="alert alert-i">Recopie les soldes d'un bulletin, à sa date de fin de mois. Ensuite le site ajoute seul 2,08 j de CP et 0,83 j de RTT par mois, déduit les congés validés (N-1 d'abord) et fait la bascule du 1er juin. Les champs sont pré-remplis avec les soldes calculés à cette date : il suffit de corriger ce qui diffère du bulletin.</div>`;
+  h+=`<div class="alert alert-i">Recopie les soldes d'un bulletin, à sa date de fin de mois. Ensuite le site ajoute seul 2,08 j de CP par mois et un douzième des RTT de l'année (réglés dans Gestion admin), déduit les congés validés (N-1 d'abord), fait la bascule des CP au 1er juin et remet les RTT à zéro au 1er janvier. Les champs sont pré-remplis avec les soldes calculés à cette date : il suffit de corriger ce qui diffère du bulletin.</div>`;
   h+=`<div class="frow"><div class="fg"><label>Soldes au (date du bulletin)</label><input type="date" id="ed-date" value="${D}" onchange="prefillRef('${u.id}')"></div>`;
   h+=`<div class="fg"><label>Reliquat antérieur</label><input type="text" id="ed-rel" placeholder="0"></div></div>`;
   h+=`<div class="frow"><div class="fg"><label id="ed-n1-lbl">CP N-1</label><input type="text" id="ed-n1"></div><div class="fg"><label id="ed-n-lbl">CP N</label><input type="text" id="ed-n"></div><div class="fg"><label>RTT</label><input type="text" id="ed-rtt"></div></div>`;
@@ -1502,6 +1521,7 @@ async function saveEditReq() {
 // ===== ADMIN FUNCTIONS =====
 function pgAdmin(){
   let h=`<div class="ptitle">&#9881;&#65039; Gestion admin</div><div class="psub">Poser, modifier ou annuler des jours pour les salari&#233;s</div>`;
+  h+=rttYearsBox();
   
   // Button to add request for employee
   h+=`<div class="twrap"><div class="thead2"><span class="ttitle">Poser des jours pour un salari&#233;</span><button class="btn btn-dark btn-sm" onclick="openAdminReq()">+ Ajouter des jours</button></div>`;
@@ -1518,6 +1538,25 @@ function pgAdmin(){
   });
   h+=`</tbody></table></div>`;
   return h;
+}
+
+// Réglage du nombre de RTT par année (identique pour tous)
+function rttYearsBox(){
+  const y=new Date().getFullYear(),years=[y,y+1];
+  let h=`<div class="twrap" style="padding:16px 18px"><div class="ttitle" style="margin-bottom:6px">RTT par année civile (identique pour tous)</div>`;
+  h+=`<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Nombre total de RTT de l'année. Le site en crédite un douzième chaque mois (au prorata pour une entrée en cours d'année). Les RTT non pris sont perdus au 1er janvier.</div>`;
+  years.forEach(a=>{
+    const v=RTT_YEARS[a];
+    h+=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><label style="width:50px;font-weight:600">${a}</label><input type="text" id="rtty-${a}" value="${v!=null?v:''}" placeholder="${a<=2026?'9,96 (règle actuelle)':'à renseigner'}" style="width:140px;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px"> <span style="font-size:12px;color:var(--muted)">jours${v!=null?` · soit ${(v/12).toFixed(2)} j par mois`:''}</span> <button class="btn btn-dark btn-sm" onclick="saveRttYear(${a})">Enregistrer</button></div>`;
+  });
+  if(RTT_YEARS[y+1]==null&&y+1>2026)h+=`<div class="alert alert-w" style="margin:6px 0 0">⚠️ RTT ${y+1} non renseignés : sans chiffre, aucun RTT ne sera acquis en ${y+1}.</div>`;
+  h+=`</div>`;return h;
+}
+async function saveRttYear(a){
+  const v=num(document.getElementById('rtty-'+a)?.value);
+  if(v===null||isNaN(v)||v<0||v>60){notif('Indique un nombre de jours entre 0 et 60 (virgule acceptée)','error');return;}
+  try{ await db.saveRttYear(a,v); RTT_YEARS[a]=v; notif(`RTT ${a} : ${v} j enregistrés ✓`,'success'); renderPage('admin'); }
+  catch(e){ notif('Erreur: '+e.message,'error'); }
 }
 
 function openAdminReq(){
