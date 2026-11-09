@@ -244,6 +244,17 @@ tr:last-child td{border-bottom:none;}tr:hover td{background:#FAFAF8;}
 </div>
 
 
+<div class="moverlay" id="m-rpay">
+  <div class="modal">
+    <div class="mtitle">💶 Payer des jours de récupération</div><div class="msub" id="rp-sub">—</div>
+    <div class="fg"><label>Nombre de jours payés</label><input type="text" id="rp-nb" placeholder="Ex : 2 ou 1,5"></div>
+    <div class="fg"><label>Mois de paie</label><input type="month" id="rp-mois"></div>
+    <div class="fg"><label>Commentaire (facultatif)</label><input type="text" id="rp-com" placeholder="Ex : à la demande du salarié"></div>
+    <input type="hidden" id="rp-uid">
+    <div class="mact"><button class="btn btn-ol" onclick="closeM('m-rpay')">Annuler</button><button class="btn btn-dark" onclick="saveRPay()">Enregistrer</button></div>
+  </div>
+</div>
+
 <!-- MODAL: Admin -->
 
 <!-- MODAL: Cancel request (employee) -->
@@ -410,6 +421,23 @@ const db = {
     if(error) throw new Error(error.message);
     if(!d||!d.length) throw new Error(NOT_ALLOWED);
   },
+  // Jours de récupération payés (table recup_paiements)
+  async getRecupPay() {
+    const {data,error} = await _supabase.from('recup_paiements').select('*').order('mois_paie');
+    if(error){ console.warn('recup_paiements:', error.message); return []; }
+    return data||[];
+  },
+  async addRecupPay(data) {
+    const {data:d,error} = await _supabase.from('recup_paiements').insert(data).select();
+    if(error) throw new Error(error.message);
+    if(!d||!d.length) throw new Error(NOT_ALLOWED);
+    return d[0];
+  },
+  async delRecupPay(id) {
+    const {data:d,error} = await _supabase.from('recup_paiements').delete().eq('id',id).select('id');
+    if(error) throw new Error(error.message);
+    if(!d||!d.length) throw new Error(NOT_ALLOWED);
+  },
   async getAllRecup() {
     const {data,error} = await _supabase.from('recup_entries').select('*').order('id');
     if(error) throw new Error(error.message);
@@ -468,6 +496,8 @@ const CALMAP = {};
 let TEAMCAL = [];
 // Annuaire minimal (lecture seule limitée)
 let TEAMDIR = [];
+// Jours de récup payés, par salarié
+let RECUP_PAY = {};
 
 // Jours fériés français, calculés automatiquement pour chaque année
 function easterSunday(y){
@@ -590,6 +620,7 @@ async function loadAllData(){
   // la personne connectée et sa ligne dans la liste sont le même objet
   const me=USERS.find(x=>x.id===CURRENT_USER.id); if(me) CURRENT_USER=me;
   RECUP={}; USERS.forEach(u=>RECUP[u.id]=[]);
+  RECUP_PAY={}; (await db.getRecupPay()).forEach(p=>{(RECUP_PAY[p.user_id]=RECUP_PAY[p.user_id]||[]).push(p);});
   rec.forEach(r=>{(RECUP[r.user_id]=RECUP[r.user_id]||[]).push(r);});
   ABSDAYS=abs.map(x=>({d:x.day,t:x.type,u:x.user_id,half:x.half||undefined}));
   Object.keys(CALMAP).forEach(k=>delete CALMAP[k]);
@@ -720,7 +751,11 @@ const RECUP_SWITCH = '2026-11-09';
 const recupReqs=(uid,st)=>REQUESTS.filter(r=>r.user_id===uid&&r.type==='RECUP'&&r.status===st&&String(r.created_at||'').slice(0,10)>=RECUP_SWITCH);
 const recupByReq=uid=>Math.round(recupReqs(uid,'approved').reduce((s,r)=>s+Number(r.days||0),0)*100)/100;
 const recupPending=uid=>Math.round(recupReqs(uid,'pending').reduce((s,r)=>s+Number(r.days||0),0)*100)/100;
-const recupLeft=uid=>(RECUP[uid]||[]).reduce((s,r)=>s+Number(r.remaining||0),0)-recupByReq(uid);
+// Jours de récup payés (paie) : ne sont pas des absences, ils réduisent seulement le solde
+const recupPaid=uid=>Math.round((RECUP_PAY[uid]||[]).reduce((s,p)=>s+Number(p.jours||0),0)*100)/100;
+const recupLeft=uid=>(RECUP[uid]||[]).reduce((s,r)=>s+Number(r.remaining||0),0)-recupByReq(uid)-recupPaid(uid);
+const recupSub=uid=>`${t('taken')}: ${recupTaken(uid)} j`+(recupPaid(uid)?` · Payés : ${recupPaid(uid)} j`:'');
+const moisPaie=d=>{const m=['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];const x=String(d).slice(0,7).split('-');return `${m[+x[1]-1]} ${x[0]}`;};
 const recupTaken=uid=>Math.round(((RECUP[uid]||[]).reduce((s,r)=>s+Number(r.taken||0),0)+recupByReq(uid))*100)/100;
 
 function calcCPAcq(entry,target){
@@ -952,7 +987,7 @@ function pgDash(){
     h+=balanceCards(u.id);
     h+=`</div>`;
     h+=`<div class="cards">`;
-    h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(u.id)} j`,'');
+    h+=card(t('recup'),rl.toFixed(1),'rust',recupSub(u.id),'');
     if(isMgr())h+=card(LANG==='fr'?'En attente':'Pending',pend.length,'blue',LANG==='fr'?'à valider':'to validate','');
     h+=`</div>`;
     h+=simBox(u.id);
@@ -1016,10 +1051,10 @@ function histTbl(uid,type){
 
 function recupTbl(uid,ro){
   const rc=RECUP[uid]||[];
-  const byReq=recupByReq(uid),pend=recupPending(uid);
-  const totW=rc.reduce((s,r)=>s+Number(r.worked||0),0),totT=+(rc.reduce((s,r)=>s+Number(r.taken||0),0)+byReq).toFixed(2),totR=+(rc.reduce((s,r)=>s+Number(r.remaining||0),0)-byReq).toFixed(2);
+  const byReq=recupByReq(uid),pend=recupPending(uid),paid=recupPaid(uid);
+  const totW=rc.reduce((s,r)=>s+Number(r.worked||0),0),totT=+(rc.reduce((s,r)=>s+Number(r.taken||0),0)+byReq).toFixed(2),totR=+(rc.reduce((s,r)=>s+Number(r.remaining||0),0)-byReq-paid).toFixed(2);
   let h=`<div class="twrap"><div class="thead2"><span class="ttitle">🔄 ${t('recup_tab')}</span>`;
-  if(!ro)h+=`<button class="btn btn-ol btn-sm" onclick="openRAdd('${uid}')">${t('add_worked')}</button>`;
+  if(!ro)h+=`<span style="display:flex;gap:6px">${isAdmin()?`<button class="btn btn-ol btn-sm" onclick="openRPay('${uid}')">💶 Payer des jours</button>`:''}<button class="btn btn-ol btn-sm" onclick="openRAdd('${uid}')">${t('add_worked')}</button></span>`;
   h+=`</div><table><thead><tr><th>${t('wdates')}</th><th>${t('jobn')}</th><th>${t('wdd')}</th><th>${t('td')}</th><th>${t('tdates')}</th><th>${t('remaining')}</th>`;if(!ro)h+=`<th></th>`;h+=`</tr></thead><tbody>`;
   if(!rc.length)h+=`<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">${t('nodata')}</td></tr>`;
   else rc.forEach((r,i)=>{
@@ -1042,6 +1077,10 @@ function recupTbl(uid,ro){
     const dl=rq.map(r=>r.start_date===r.end_date?fd(r.start_date):`${fd(r.start_date)} → ${fd(r.end_date)}`).join(', ');
     h+=`<tr style="background:#F5F9FF"><td colspan="3"><em>Récups posées par demande (validées)</em></td><td>${byReq}</td><td>${dl}</td><td><strong>−${byReq}</strong></td>${ro?'':'<td></td>'}</tr>`;
   }
+  (RECUP_PAY[uid]||[]).forEach(p=>{
+    const del=(!ro&&isAdmin())?`<button class="btn-ref btn-sm" title="Supprimer ce paiement" onclick="delRPay('${uid}',${Number(p.id)})">✕</button>`:'';
+    h+=`<tr style="background:#F3FBF5"><td colspan="3"><em>💶 Payés sur la paie de ${moisPaie(p.mois_paie)}</em>${p.commentaire?` <small style="color:var(--muted)">— ${String(p.commentaire).replace(/[<>&"]/g,'')}</small>`:''}</td><td></td><td></td><td><strong>−${Number(p.jours)}</strong></td>${ro?'':`<td>${del}</td>`}</tr>`;
+  });
   h+=`<tr class="recup-foot"><td colspan="2"><strong>${t('total')}</strong></td><td><strong>${totW}</strong></td><td><strong>${totT}</strong></td><td></td><td><strong>${totR}</strong></td>`;if(!ro)h+=`<td></td>`;h+=`</tr></tbody></table>`;
   h+=`<div style="font-size:12px;color:var(--muted);padding:10px 14px">Pour poser des jours de récupération : bouton <strong>Nouvelle demande</strong>, type « Récupération ». Une fois validée, la récup est décomptée ; si elle est refusée ou annulée, le compteur se corrige tout seul.${pend?` <strong>${pend} j en attente de validation.</strong>`:''}</div></div>`;return h;
 }
@@ -1052,7 +1091,7 @@ function pgMyLeaves(){
   let h=`<div class="ptitle">${t('myleaves')}</div><div class="psub">${LANG==='fr'?'Vos soldes et historique':'Your balances and history'}</div>`;
   h+=`<div class="cards">`;
   h+=balanceCards(u.id);
-  h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(u.id)} j`,'');
+  h+=card(t('recup'),rl.toFixed(1),'rust',recupSub(u.id),'');
   h+=`</div>`;
   h+=simBox(u.id);
   h+=`<div class="tabs"><div class="tab active" onclick="swt(this,'ml-all')">📋 ${t('history')}</div><div class="tab" onclick="swt(this,'ml-cp')">🌴 ${t('cp')}</div><div class="tab" onclick="swt(this,'ml-rtt')">📆 RTT</div><div class="tab" onclick="swt(this,'ml-rec')">🔄 ${t('recup_tab')}</div></div>`;
@@ -1189,7 +1228,7 @@ function pgProfile(uid){
   if(!noBalanceProfile){
     h+=`<div class="cards">`;
     h+=balanceCards(uid);
-    h+=card(t('recup'),rl.toFixed(1),'rust',`${t('taken')}: ${recupTaken(uid)} j`,'');
+    h+=card(t('recup'),rl.toFixed(1),'rust',recupSub(uid),'');
     h+=`</div>`;
     h+=simBox(uid);
   }
@@ -1355,6 +1394,36 @@ async function saveRAdd(){
   }catch(e){notif('Erreur: '+e.message,'error');}
 }
 
+function openRPay(uid){
+  const u=USERS.find(x=>x.id===uid);
+  document.getElementById('rp-uid').value=uid;
+  document.getElementById('rp-sub').textContent=`${u?u.name:''} · Récup disponibles : ${+recupLeft(uid).toFixed(2)} j. Les jours payés ne sont pas des absences : ils réduisent seulement le solde.`;
+  document.getElementById('rp-nb').value='';document.getElementById('rp-com').value='';
+  document.getElementById('rp-mois').value=todayStr().slice(0,7);
+  openM('m-rpay');
+}
+async function saveRPay(){
+  const uid=document.getElementById('rp-uid').value;
+  const nb=num(document.getElementById('rp-nb').value),mois=document.getElementById('rp-mois').value,com=document.getElementById('rp-com').value.trim();
+  if(nb===null||isNaN(nb)||nb<=0){notif('Indique un nombre de jours (virgule acceptée)','error');return;}
+  if(!/^\d{4}-\d{2}$/.test(mois)){notif('Indique le mois de paie','error');return;}
+  if(/[<>]/.test(com)){notif('Caractères < et > interdits dans le commentaire','error');return;}
+  const av=+recupLeft(uid).toFixed(2);
+  if(nb>av){notif(`Pas assez de jours : ${av} j de récup disponibles`,'error');return;}
+  try{
+    const row=await db.addRecupPay({user_id:uid,jours:nb,mois_paie:mois+'-01',commentaire:com||null});
+    (RECUP_PAY[uid]=RECUP_PAY[uid]||[]).push(row);
+    closeM('m-rpay');notif(`${nb} j de récup payés enregistrés ✓`,'success');renderPage(AP);
+  }catch(e){notif('Erreur: '+e.message,'error');}
+}
+async function delRPay(uid,id){
+  if(!confirm('Supprimer ce paiement de récup ? Les jours reviendront dans le solde.'))return;
+  try{
+    await db.delRecupPay(id);
+    RECUP_PAY[uid]=(RECUP_PAY[uid]||[]).filter(p=>Number(p.id)!==Number(id));
+    notif('Paiement supprimé, solde rétabli ✓','success');renderPage(AP);
+  }catch(e){notif('Erreur: '+e.message,'error');}
+}
 function openRTake(uid,idx){
   _ruid=uid;const r=(RECUP[uid]||[])[idx];
   document.getElementById('rt-sub').textContent=`${r.dates} · Mission ${r.job} · Restant : ${r.remaining} j`;
