@@ -711,8 +711,17 @@ const cpFut=uid=>REQUESTS.filter(r=>r.user_id===uid&&r.type==='PL'&&r.status==='
 const rttFut=uid=>REQUESTS.filter(r=>r.user_id===uid&&r.type==='RTT'&&r.status==='approved'&&r.start_date>todayStr()).reduce((s,r)=>s+r.days,0);
 const cpTakenPast=uid=>ABSDAYS.filter(e=>e.u===uid&&e.t==='PL'&&e.d<=TODAY).length;
 const rttTakenPast=uid=>ABSDAYS.filter(e=>e.u===uid&&e.t==='RTT'&&e.d<=TODAY).length;
-const recupLeft=uid=>(RECUP[uid]||[]).reduce((s,r)=>s+Number(r.remaining||0),0);
-const recupTaken=uid=>(RECUP[uid]||[]).reduce((s,r)=>s+Number(r.taken||0),0);
+// ═══ RÉCUPÉRATION ═══
+// Jours gagnés = tableau des jours travaillés (recup_entries).
+// Depuis le 09/11/2026, les récups se posent par une demande « Récupération », comme les congés :
+// validée -> décomptée ; refusée ou annulée -> le compteur se corrige tout seul.
+// Les poses plus anciennes restent celles inscrites dans le tableau (colonne « Jours posés »).
+const RECUP_SWITCH = '2026-11-09';
+const recupReqs=(uid,st)=>REQUESTS.filter(r=>r.user_id===uid&&r.type==='RECUP'&&r.status===st&&String(r.created_at||'').slice(0,10)>=RECUP_SWITCH);
+const recupByReq=uid=>Math.round(recupReqs(uid,'approved').reduce((s,r)=>s+Number(r.days||0),0)*100)/100;
+const recupPending=uid=>Math.round(recupReqs(uid,'pending').reduce((s,r)=>s+Number(r.days||0),0)*100)/100;
+const recupLeft=uid=>(RECUP[uid]||[]).reduce((s,r)=>s+Number(r.remaining||0),0)-recupByReq(uid);
+const recupTaken=uid=>Math.round(((RECUP[uid]||[]).reduce((s,r)=>s+Number(r.taken||0),0)+recupByReq(uid))*100)/100;
 
 function calcCPAcq(entry,target){
   const e=new Date(entry+'T12:00:00'),tg=new Date(target+'T12:00:00');if(tg<e)return 0;
@@ -1007,7 +1016,8 @@ function histTbl(uid,type){
 
 function recupTbl(uid,ro){
   const rc=RECUP[uid]||[];
-  const totW=rc.reduce((s,r)=>s+Number(r.worked||0),0),totT=rc.reduce((s,r)=>s+Number(r.taken||0),0),totR=rc.reduce((s,r)=>s+Number(r.remaining||0),0);
+  const byReq=recupByReq(uid),pend=recupPending(uid);
+  const totW=rc.reduce((s,r)=>s+Number(r.worked||0),0),totT=+(rc.reduce((s,r)=>s+Number(r.taken||0),0)+byReq).toFixed(2),totR=+(rc.reduce((s,r)=>s+Number(r.remaining||0),0)-byReq).toFixed(2);
   let h=`<div class="twrap"><div class="thead2"><span class="ttitle">🔄 ${t('recup_tab')}</span>`;
   if(!ro)h+=`<button class="btn btn-ol btn-sm" onclick="openRAdd('${uid}')">${t('add_worked')}</button>`;
   h+=`</div><table><thead><tr><th>${t('wdates')}</th><th>${t('jobn')}</th><th>${t('wdd')}</th><th>${t('td')}</th><th>${t('tdates')}</th><th>${t('remaining')}</th>`;if(!ro)h+=`<th></th>`;h+=`</tr></thead><tbody>`;
@@ -1019,15 +1029,21 @@ function recupTbl(uid,ro){
     if(!ro){
       if(isPending&&canValidate(uid)){
         h+=`<td><button class="btn-appr btn-sm" onclick="approveRecup('${uid}',${r.id})">✓</button> <button class="btn-ref btn-sm" onclick="refuseRecup('${uid}',${r.id})">✕</button></td>`;
-      } else if(!isPending&&Number(r.remaining)>0){
-        h+=`<td><button class="btn btn-sm btn-ol" onclick="openRTake('${uid}',${i})">${t('take_days')}</button></td>`;
+      } else if(!isPending&&Number(r.remaining)>0&&isAdmin()){
+        h+=`<td><button class="btn btn-sm btn-ol" title="Ajustement manuel (admin)" onclick="openRTake('${uid}',${i})">${t('take_days')}</button></td>`;
       } else {
         h+=`<td></td>`;
       }
     }
     h+=`</tr>`;
   });
-  h+=`<tr class="recup-foot"><td colspan="2"><strong>${t('total')}</strong></td><td><strong>${totW}</strong></td><td><strong>${totT}</strong></td><td></td><td><strong>${totR}</strong></td>`;if(!ro)h+=`<td></td>`;h+=`</tr></tbody></table></div>`;return h;
+  const rq=recupReqs(uid,'approved');
+  if(rq.length){
+    const dl=rq.map(r=>r.start_date===r.end_date?fd(r.start_date):`${fd(r.start_date)} → ${fd(r.end_date)}`).join(', ');
+    h+=`<tr style="background:#F5F9FF"><td colspan="3"><em>Récups posées par demande (validées)</em></td><td>${byReq}</td><td>${dl}</td><td><strong>−${byReq}</strong></td>${ro?'':'<td></td>'}</tr>`;
+  }
+  h+=`<tr class="recup-foot"><td colspan="2"><strong>${t('total')}</strong></td><td><strong>${totW}</strong></td><td><strong>${totT}</strong></td><td></td><td><strong>${totR}</strong></td>`;if(!ro)h+=`<td></td>`;h+=`</tr></tbody></table>`;
+  h+=`<div style="font-size:12px;color:var(--muted);padding:10px 14px">Pour poser des jours de récupération : bouton <strong>Nouvelle demande</strong>, type « Récupération ». Une fois validée, la récup est décomptée ; si elle est refusée ou annulée, le compteur se corrige tout seul.${pend?` <strong>${pend} j en attente de validation.</strong>`:''}</div></div>`;return h;
 }
 
 function pgMyLeaves(){
@@ -1267,6 +1283,9 @@ function updBalInfo(){
   if(type==='PL')m+=` — Solde CP disponible : <strong>${cpCurrent(u.id).toFixed(2)} j</strong>`;
   if(type==='RTT')m+=` — Solde RTT disponible : <strong>${rttCurrent(u.id).toFixed(2)} j</strong>`;
   }
+  if(type==='RECUP'){const av=+recupLeft(u.id).toFixed(2),pd=recupPending(u.id);
+    m+=` — Récup disponibles : <strong>${av} j</strong>${pd?` (dont ${pd} j déjà demandés, en attente)`:''}`;
+    if(d>av-pd)m+=`<br>⚠️ <strong>Cette demande dépasse les jours de récupération disponibles.</strong>`;}
   m+=`</div>`;el.innerHTML=m;
 }
 
